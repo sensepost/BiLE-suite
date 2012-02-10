@@ -1,0 +1,117 @@
+#!/usr/bin/perl
+	use Data::Dumper;						# Vital debugging tool
+	use Net::DNS;
+my $res= Net::DNS::Resolver->new();
+
+##############
+#Sub Routines
+##############
+sub dedupe(@){return uniq map { lc $_ } @_;	}
+
+#	----------------------------
+sub forward($;$)	{my( $host,$mode, )= @_;
+	$mode	||= 0;
+#	----------------------------
+	my @results		= ();
+	my $query		= $res->search($host);
+	return () unless $query;
+	foreach my $rr ($query->answer)	{
+		next unless ( $rr->type eq "A" );
+		my $address	= $rr->{"address"};
+		my $data	= $address;
+		$data		= "$host;$data"		if ( $mode >= 1 );
+		$data		= "$data;FL"		if ( $mode >= 2 );
+		$data		= "$data;$host"		if ( $mode >= 3 );
+		push @results, $data;	}
+	return uniq sort @results;
+	}
+
+#	----------------------------
+sub nslookup($;$){my( $host,$mode, )	= @_;
+	$mode	||= 0;
+#	----------------------------
+	my @results			= ();
+	my $query			= $res->query($host,"NS");
+	return () unless $query;
+	foreach my $rr ($query->answer)	{
+		next unless ( $rr->type eq "NS" );
+		my $address		= $rr->{"nsdname"};
+		my @addresses		= forward($address);
+		foreach my $data (@addresses){
+		$data		= "$host;$data"		if ( $mode >= 1 );
+		$data		= "$data;NS"		if ( $mode >= 2 );
+		$data		= "$data;$host"		if ( $mode >= 3 );
+		push @results, $data;	}
+		}
+	return uniq sort @results;
+	}
+
+#	----------------------------
+###
+#Main Program starts here
+###
+$|=1;
+
+use Parallel::ForkManager;
+
+my $MAX_PROCESSES = 6;
+my $pm=new Parallel::ForkManager($MAX_PROCESSES);
+
+################# POPULATE @stuff ####################
+if ($#ARGV < 1) {die "perl jarf-dnsbrute domain.com commonnames.txt\n\n";}
+
+my $domain=$ARGV[0];
+my $common=@ARGV[1];
+my @stuff		= ();
+
+if ( -r $common  )	{
+	open DATA, $common;
+	@stuff		= <DATA>;
+	close DATA;
+	chomp @stuff;
+	}
+else	{
+	print STDERR "Couldn't read file '$common'\n";
+	exit 1;
+	}
+	
+unless ( scalar @stuff )	{
+	print STDERR "Couldn't load any data\n";
+	exit 2;
+	}
+
+@stuff 		= map "$_.$domain", @stuff;
+
+
+my $brutel=0;
+my $mode=2;
+
+if ($mode==0){$mode=1;}
+
+my ($bullshit)=forward("name.$domain");
+if (length($bullshit)>0){
+        if ($mode==2){
+                print "-any*non*valid-.$domain;$bullshit;CRAP\n";
+        } else {print "-any*non*valid-.$domain;$bullshit;\n";}
+exit 3;
+}
+
+############## OK ready to launch!
+foreach $thing (@stuff){
+	my $pid = $pm->start("id: $thing") and next;
+	do_work($thing);
+	$pm->finish();
+}
+$pm->wait_all_children();
+
+##############
+sub do_work{
+        my ($passed)=@_;
+        @nslookupout=forward($passed,$mode);
+        foreach $out (@nslookupout){
+                my ($testname,$testip)=split(/;/,$out);
+                if ($testip ne $bullshit){
+                        print "$out\n";
+                }
+        }
+}
