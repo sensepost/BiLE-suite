@@ -92,7 +92,7 @@ foreach $blah (keys %sites){
 
 &writenodes;
 
-`cat temp | sort -r -t ":" +1 -n > @ARGV[1].sorted`;
+`cat temp | sort -n -r -t: -k2 > @ARGV[1].sorted`;
 
 
 sub loadnodes{
